@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, X, Loader2 } from 'lucide-react';
-import { searchSymbols, SearchResult } from '../services/marketService';
+import { searchSymbols, getCompanyProfile, SearchResult } from '../services/marketService';
+
+type SearchResultWithProfile = SearchResult & { industry?: string };
 
 interface SymbolSearchProps {
   onAdd: (symbol: string) => void;
@@ -9,7 +11,7 @@ interface SymbolSearchProps {
 
 export function SymbolSearch({ onAdd, favorites }: SymbolSearchProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<SearchResultWithProfile[]>([]);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
 
@@ -19,7 +21,25 @@ export function SymbolSearch({ onAdd, favorites }: SymbolSearchProps) {
         setLoading(true);
         try {
           const res = await searchSymbols(query);
-          setResults(res.slice(0, 8));
+          const topResults = res.slice(0, 5);
+          
+          // Enhanced: Fetch profiles for top results to show sector/industry
+          const resultsWithProfiles = await Promise.all(
+            topResults.map(async (item) => {
+              try {
+                // Only fetch for stocks to save tokens
+                if (item.type === 'Common Stock') {
+                  const profile = await getCompanyProfile(item.symbol);
+                  return { ...item, industry: profile.finnhubIndustry };
+                }
+              } catch (err) {
+                console.warn(`Could not fetch profile for ${item.symbol}`);
+              }
+              return item;
+            })
+          );
+
+          setResults(resultsWithProfiles);
         } catch (e) {
           console.error(e);
         } finally {
@@ -61,9 +81,16 @@ export function SymbolSearch({ onAdd, favorites }: SymbolSearchProps) {
               }}
               className="flex items-center justify-between p-3 hover:bg-slate-50 cursor-pointer transition-colors group"
             >
-              <div>
-                <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{res.symbol}</div>
-                <div className="text-[10px] text-slate-500 truncate max-w-[200px]">{res.description}</div>
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{res.symbol}</span>
+                  {res.industry && (
+                    <span className="text-[8px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-widest border border-blue-100">
+                      {res.industry}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500 truncate max-w-[240px] font-medium">{res.description}</div>
               </div>
               {favorites.includes(res.symbol) ? (
                 <span className="text-[10px] font-bold text-emerald-500 uppercase">In Watchlist</span>

@@ -5,10 +5,21 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
+  BarChart, 
+  Bar, 
+  XAxis as ReXAxis, 
+  YAxis as ReYAxis, 
+  CartesianGrid as ReCartesianGrid, 
+  Tooltip as ReTooltip, 
+  ResponsiveContainer as ReResponsiveContainer,
+  Cell
+} from 'recharts';
+import { 
   BarChart3, 
   BrainCircuit, 
   ChevronRight, 
   LayoutDashboard, 
+  LayoutGrid,
   MessageSquareCode, 
   MonitorDot, 
   Settings, 
@@ -38,6 +49,7 @@ import { MarketChart, TimeRange } from './components/FinanceChart';
 import { NewsPanel } from './components/NewsPanel';
 import { Forecaster } from './components/Forecaster';
 import { SymbolSearch } from './components/SymbolSearch';
+import { MarketHeatmap } from './components/MarketHeatmap';
 import { getQuote, getCompanyNews, getMarketNews, getCandles, getCompanyProfile, isDemo, MarketQuote, CompanyProfile } from './services/marketService';
 import { predictPrice, PricePrediction } from './services/geminiService';
 
@@ -77,12 +89,20 @@ export default function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1D');
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | undefined>(undefined);
-  const [marketData, setMarketData] = useState<{ quote: MarketQuote | null, news: any[], candles: any[], portfolioCandles: any[], profile: CompanyProfile | null }>({
+  const [marketData, setMarketData] = useState<{ 
+    quote: MarketQuote | null, 
+    news: any[], 
+    candles: any[], 
+    portfolioCandles: any[], 
+    profile: CompanyProfile | null,
+    watchlistQuotes: { [s: string]: { price: number, change: number } }
+  }>({
     quote: null,
     news: [],
     candles: [],
     portfolioCandles: [],
-    profile: null
+    profile: null,
+    watchlistQuotes: {}
   });
   const [prediction, setPrediction] = useState<PricePrediction | null>(null);
   const [loading, setLoading] = useState(false);
@@ -146,6 +166,9 @@ export default function App() {
               timeToTicks[timeKey] = t;
             }
             mergedMap[timeKey][symbol] = candles.c[i];
+            if (symbol === primarySymbol && candles.v) {
+              mergedMap[timeKey].volume = candles.v[i];
+            }
           });
         }
       });
@@ -176,7 +199,26 @@ export default function App() {
         });
       });
 
-      setMarketData({ quote, news, candles: formattedCandles, portfolioCandles, profile });
+      // Calculate relative changes for the ticker
+      const watchlistQuotes: { [s: string]: { price: number, change: number } } = {};
+      watchlist.forEach(s => {
+        const symbolCandles = formattedCandles.filter(c => c[s] !== undefined);
+        if (symbolCandles.length >= 2) {
+          const current = symbolCandles[symbolCandles.length - 1][s];
+          const prev = symbolCandles[symbolCandles.length - 2][s];
+          watchlistQuotes[s] = {
+            price: current,
+            change: ((current / prev) - 1) * 100
+          };
+        } else if (symbolCandles.length === 1) {
+          watchlistQuotes[s] = {
+            price: symbolCandles[0][s],
+            change: 0
+          };
+        }
+      });
+
+      setMarketData({ quote, news, candles: formattedCandles, portfolioCandles, profile, watchlistQuotes });
       setDemoMode(isDemo());
       
       // Check alerts after data fetch
@@ -668,6 +710,102 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Volume Analysis Chart */}
+                    <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+                      <div className="flex items-center gap-3 mb-8">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                          <Activity className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-slate-900 text-lg">Trading Volume Analysis</h3>
+                          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest leading-none">Standard Volume Units ({selectedSymbol})</p>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <ReResponsiveContainer width="100%" height="100%">
+                          <BarChart data={marketData.candles}>
+                            <ReCartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                            <ReXAxis 
+                              dataKey="time" 
+                              stroke="#94a3b8" 
+                              fontSize={10} 
+                              tickLine={false} 
+                              axisLine={false}
+                              dy={10}
+                              minTickGap={30}
+                            />
+                            <ReYAxis 
+                              stroke="#94a3b8" 
+                              fontSize={10} 
+                              tickLine={false} 
+                              axisLine={false}
+                              dx={-10}
+                              tickFormatter={(val) => val >= 1000000 ? `${(val / 1000000).toFixed(1)}M` : (val >= 1000 ? `${(val / 1000).toFixed(1)}K` : val)}
+                            />
+                            <ReTooltip 
+                              cursor={{fill: '#f8fafc'}}
+                              content={({ active, payload, label }: any) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-white border border-slate-200 p-3 rounded-xl shadow-xl">
+                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+                                      <p className="text-sm font-black text-slate-900">{payload[0].value?.toLocaleString()} Units</p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                            />
+                            <Bar 
+                              dataKey="volume" 
+                              radius={[4, 4, 0, 0]}
+                              animationDuration={1500}
+                            >
+                              {marketData.candles.map((_entry, index) => {
+                                const currentPrice = marketData.candles[index][selectedSymbol];
+                                const prevPrice = index > 0 ? marketData.candles[index-1][selectedSymbol] : currentPrice;
+                                const isUp = currentPrice >= prevPrice;
+                                return <Cell key={`cell-${index}`} fill={isUp ? "#10b981" : "#ef4444"} fillOpacity={0.6} />;
+                              })}
+                            </Bar>
+                          </BarChart>
+                        </ReResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Market Performance Heatmap */}
+                    <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+                      <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-slate-50 text-slate-900 flex items-center justify-center">
+                            <LayoutGrid className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-lg">Market Performance Heatmap</h3>
+                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest leading-none">Relative Watchlist Strength</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                           <div className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded bg-rose-500"></div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Weak</span>
+                           </div>
+                           <div className="w-12 h-1 bg-gradient-to-r from-rose-500 via-slate-200 to-emerald-500 rounded-full"></div>
+                           <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Strong</span>
+                              <div className="w-2 h-2 rounded bg-emerald-500"></div>
+                           </div>
+                        </div>
+                      </div>
+                      <div className="min-h-[200px]">
+                        <MarketHeatmap 
+                          data={marketData.watchlistQuotes} 
+                          onSelect={toggleComparison}
+                          loading={loading}
+                        />
+                      </div>
+                    </div>
+
                     {prediction && (
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
@@ -989,24 +1127,48 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Ticker Footer */}
-          <footer className="h-10 bg-slate-900 shrink-0 border-t border-slate-800 flex items-center px-6 overflow-hidden select-none">
-            <div className="animate-marquee flex gap-12 items-center whitespace-nowrap">
-              {watchlist.map((symbol, i) => (
-                <div 
-                  key={i} 
-                  onClick={() => setSelectedSymbol(symbol)}
-                  className="flex gap-2 text-[10px] font-bold tracking-tight items-center cursor-pointer hover:bg-slate-800 px-2 py-1 rounded transition-colors"
-                >
-                  <span className="text-slate-500 uppercase">{symbol}</span>
-                  <span className="text-white font-mono">LIVE</span>
-                </div>
-              ))}
-            </div>
-          </footer>
         </main>
       </div>
+
+      {/* Ticker Footer */}
+      <footer className="h-10 bg-slate-900 shrink-0 border-t border-slate-800 flex items-center overflow-hidden select-none relative z-50">
+        <div className="flex items-center bg-slate-900 z-10 px-4 h-full border-r border-slate-800 shadow-[10px_0_15px_rgba(0,0,0,0.5)]">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+            <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Market Feed</span>
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden relative h-full flex items-center">
+          <div className="animate-marquee flex gap-12 items-center whitespace-nowrap px-6">
+            {[...watchlist, ...watchlist].map((symbol, i) => {
+              const data = marketData.watchlistQuotes[symbol];
+              return (
+                <div 
+                  key={i} 
+                  onClick={() => toggleComparison(symbol)}
+                  className="flex gap-3 text-[10px] font-bold tracking-tight items-center cursor-pointer hover:bg-slate-800 px-3 py-1 rounded-md transition-colors"
+                >
+                  <span className="text-slate-400 uppercase font-black">{symbol}</span>
+                  {data ? (
+                    <>
+                      <span className="text-white font-mono">${data.price.toFixed(2)}</span>
+                      <span className={cn(
+                        "flex items-center gap-0.5 font-bold",
+                        data.change >= 0 ? "text-emerald-500" : "text-rose-500"
+                      )}>
+                        {data.change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                        {data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-slate-600 animate-pulse font-mono">Loading...</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

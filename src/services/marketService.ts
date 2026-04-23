@@ -139,13 +139,15 @@ export async function getCandles(symbol: string, resolution: string = 'D', from?
     const count = resolution === '5' ? 20 : (resolution === '30' ? 50 : 100);
     const times = [];
     const prices = [];
+    const volumes = [];
     const startPrice = MOCK_DATA[symbol]?.quote?.pc || 100;
     
     for (let i = 0; i < count; i++) {
       times.push(currentFrom + (i * (currentTo - currentFrom) / count));
       prices.push(startPrice + Math.sin(i * 0.2) * 10 + (Math.random() - 0.5) * 5);
+      volumes.push(Math.floor(Math.random() * 1000000) + 500000);
     }
-    return { t: times, c: prices };
+    return { t: times, c: prices, v: volumes };
   }
   return data;
 }

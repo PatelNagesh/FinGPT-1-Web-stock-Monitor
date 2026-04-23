@@ -10,6 +10,7 @@ import {
   AreaChart,
   Area
 } from 'recharts';
+import { Calendar } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const defaultData = [
@@ -63,27 +64,36 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export type TimeRange = '1D' | '5D' | '1M' | '6M' | '1Y';
+export type TimeRange = '1D' | '5D' | '1M' | '6M' | '1Y' | 'CUSTOM';
 
 interface MarketChartProps {
   symbols: string[];
   data?: any[];
   activeRange?: TimeRange;
-  onRangeChange?: (range: TimeRange) => void;
+  customRange?: { from: string; to: string };
+  onRangeChange?: (range: TimeRange, custom?: { from: string; to: string }) => void;
 }
 
-export function MarketChart({ symbols, data, activeRange = '1D', onRangeChange }: MarketChartProps) {
+export function MarketChart({ symbols, data, activeRange = '1D', customRange, onRangeChange }: MarketChartProps) {
   const [chartData, setChartData] = React.useState(data || defaultData);
+  const [localCustomFrom, setLocalCustomFrom] = React.useState(customRange?.from || '');
+  const [localCustomTo, setLocalCustomTo] = React.useState(customRange?.to || '');
 
   React.useEffect(() => {
     if (data) setChartData(data);
   }, [data]);
 
-  const ranges: TimeRange[] = ['1D', '5D', '1M', '1Y'];
+  const ranges: TimeRange[] = ['1D', '5D', '1M', '6M', '1Y'];
+
+  const handleApplyCustom = () => {
+    if (localCustomFrom && localCustomTo) {
+      onRangeChange?.('CUSTOM', { from: localCustomFrom, to: localCustomTo });
+    }
+  };
 
   return (
-    <div className="h-[360px] w-full bg-white p-4">
-      <div className="flex justify-between items-start mb-6">
+    <div className="h-[400px] w-full bg-white p-4">
+      <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-6">
         <div className="space-y-2">
           <div>
             <h3 className="font-bold text-slate-800 text-sm tracking-tight">Market Benchmarking</h3>
@@ -98,24 +108,63 @@ export function MarketChart({ symbols, data, activeRange = '1D', onRangeChange }
              ))}
           </div>
         </div>
-        <div className="flex gap-1 bg-slate-50 p-1 rounded-lg border border-slate-100">
-          {ranges.map((r) => (
+        
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-1 bg-slate-50 p-1 rounded-lg border border-slate-100">
+            {ranges.map((r) => (
+              <button
+                key={r}
+                onClick={() => onRangeChange?.(r)}
+                className={cn(
+                  "px-2.5 py-1 rounded-md text-[10px] font-bold transition-all",
+                  activeRange === r 
+                    ? "bg-white text-blue-600 shadow-sm border border-slate-200" 
+                    : "text-slate-400 hover:text-slate-600"
+                )}
+              >
+                {r}
+              </button>
+            ))}
             <button
-              key={r}
-              onClick={() => onRangeChange?.(r)}
-              className={cn(
-                "px-2.5 py-1 rounded-md text-[10px] font-bold transition-all",
-                activeRange === r 
+               onClick={() => onRangeChange?.('CUSTOM')}
+               className={cn(
+                "px-2.5 py-1 rounded-md text-[10px] font-bold transition-all flex items-center gap-1",
+                activeRange === 'CUSTOM'
                   ? "bg-white text-blue-600 shadow-sm border border-slate-200" 
                   : "text-slate-400 hover:text-slate-600"
               )}
             >
-              {r}
+              <Calendar className="w-3 h-3" />
+              Custom
             </button>
-          ))}
+          </div>
+
+          {activeRange === 'CUSTOM' && (
+            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+              <input 
+                type="date" 
+                value={localCustomFrom}
+                onChange={(e) => setLocalCustomFrom(e.target.value)}
+                className="text-[10px] p-1.5 bg-white border border-slate-200 rounded text-slate-600"
+              />
+              <span className="text-slate-300 text-xs">to</span>
+              <input 
+                type="date" 
+                value={localCustomTo}
+                onChange={(e) => setLocalCustomTo(e.target.value)}
+                className="text-[10px] p-1.5 bg-white border border-slate-200 rounded text-slate-600"
+              />
+              <button 
+                onClick={handleApplyCustom}
+                className="p-1.5 bg-blue-600 text-white rounded text-[10px] font-bold hover:bg-blue-700 transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
         </div>
       </div>
-      <ResponsiveContainer width="100%" height="80%">
+      <ResponsiveContainer width="100%" height="75%">
         <AreaChart data={chartData}>
           <defs>
             {symbols.map((s, i) => (

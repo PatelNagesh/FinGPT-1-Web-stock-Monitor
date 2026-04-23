@@ -26,7 +26,8 @@ import {
   AlertCircle,
   Bell,
   BellRing,
-  X
+  X,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -66,8 +67,13 @@ export default function App() {
   const [comparisonSymbols, setComparisonSymbols] = useState<string[]>(['NVDA']);
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [alertInput, setAlertInput] = useState('');
+  const [alertSettings, setAlertSettings] = useState({
+    soundEnabled: true,
+    allowedTypes: 'both' as 'both' | 'above' | 'below',
+  });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1D');
+  const [customRange, setCustomRange] = useState<{ from: string; to: string } | undefined>(undefined);
   const [marketData, setMarketData] = useState<{ quote: MarketQuote | null, news: any[], candles: any[], profile: CompanyProfile | null }>({
     quote: null,
     news: [],
@@ -80,7 +86,7 @@ export default function App() {
   const [predicting, setPredicting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (symbols: string[], range: TimeRange) => {
+  const fetchData = useCallback(async (symbols: string[], range: TimeRange, custom?: { from: string; to: string }) => {
     setLoading(true);
     setError(null);
     try {
@@ -94,9 +100,16 @@ export default function App() {
       } else if (range === '1M') {
         from = to - 86400 * 30;
         resolution = 'D';
+      } else if (range === '6M') {
+        from = to - 86400 * 180;
+        resolution = 'D';
       } else if (range === '1Y') {
         from = to - 86400 * 365;
         resolution = 'W';
+      } else if (range === 'CUSTOM' && custom) {
+        from = Math.floor(new Date(custom.from).getTime() / 1000);
+        const customTo = Math.floor(new Date(custom.to).getTime() / 1000);
+        resolution = (customTo - from) > 86400 * 60 ? 'W' : 'D';
       }
 
       // Fetch primary symbol data (quote, news, and profile)
@@ -158,16 +171,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchData(comparisonSymbols, timeRange);
+    fetchData(comparisonSymbols, timeRange, customRange);
 
     const interval = setInterval(() => {
-      fetchData(comparisonSymbols, timeRange);
+      fetchData(comparisonSymbols, timeRange, customRange);
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [comparisonSymbols, timeRange, fetchData]);
+  }, [comparisonSymbols, timeRange, customRange, fetchData]);
 
   const toggleComparison = (symbol: string) => {
+    setPrediction(null); // Reset prediction when changing focus
     setComparisonSymbols(prev => {
        const isIncluded = prev.includes(symbol);
        if (isIncluded) {
@@ -193,15 +207,28 @@ export default function App() {
 
   const checkAlerts = useCallback((symbol: string, currentPrice: number) => {
     setAlerts(prev => {
-      const triggered = prev.filter(a => 
-        a.symbol === symbol && 
-        ((a.type === 'above' && currentPrice >= a.targetPrice) || 
-         (a.type === 'below' && currentPrice <= a.targetPrice))
-      );
+      const triggered = prev.filter(a => {
+        const matchesSymbol = a.symbol === symbol;
+        const matchesTypeFilter = alertSettings.allowedTypes === 'both' || a.type === alertSettings.allowedTypes;
+        if (!matchesSymbol || !matchesTypeFilter) return false;
+
+        return (a.type === 'above' && currentPrice >= a.targetPrice) || 
+               (a.type === 'below' && currentPrice <= a.targetPrice);
+      });
 
       if (triggered.length > 0) {
         triggered.forEach(t => {
           const id = Math.random().toString(36).substr(2, 9);
+          
+          if (alertSettings.soundEnabled) {
+            // Attempt to play a subtle notification sound (browser allowing)
+            try {
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+              audio.volume = 0.3;
+              audio.play().catch(() => {});
+            } catch (e) {}
+          }
+
           setNotifications(prevNotif => [
             ...prevNotif,
             {
@@ -269,6 +296,7 @@ export default function App() {
   };
 
   const addToWatchlist = (symbol: string) => {
+    setPrediction(null); // Reset prediction
     if (!watchlist.includes(symbol)) {
       setWatchlist(prev => [...prev, symbol]);
     }
@@ -304,7 +332,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-6">
           <button 
-            onClick={() => fetchData(comparisonSymbols, timeRange)}
+            onClick={() => fetchData(comparisonSymbols, timeRange, customRange)}
             className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-all active:rotate-180 duration-500"
           >
             <RefreshCcw className="w-4 h-4" />
@@ -576,44 +604,81 @@ export default function App() {
                         symbols={comparisonSymbols} 
                         data={marketData.candles} 
                         activeRange={timeRange}
-                        onRangeChange={setTimeRange}
+                        customRange={customRange}
+                        onRangeChange={(range, custom) => {
+                          setTimeRange(range);
+                          if (custom) setCustomRange(custom);
+                        }}
                       />
                     </div>
                     {prediction && (
-                      <div className="bg-white border-2 border-blue-100 rounded-3xl p-8 flex flex-col gap-6 shadow-xl shadow-blue-50 relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 p-8 transform translate-x-4 -translate-y-4 opacity-5 group-hover:scale-110 transition-transform duration-700">
-                           <BrainCircuit className="w-32 h-32 text-blue-600" />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-white border-2 border-blue-600/10 rounded-3xl p-8 flex flex-col gap-6 shadow-xl shadow-blue-500/5 relative overflow-hidden group"
+                      >
+                        <div className="absolute top-0 right-0 p-10 transform translate-x-8 -translate-y-8 opacity-[0.03] group-hover:scale-110 transition-transform duration-1000 rotate-12">
+                           <BrainCircuit className="w-48 h-48 text-blue-600" />
                         </div>
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-200">
-                            <Zap className="w-5 h-5 fill-current" />
+                        
+                        <div className="flex items-center justify-between relative z-10">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-xl shadow-blue-200">
+                              <Sparkles className="w-6 h-6 fill-current" />
+                            </div>
+                            <div>
+                               <div className="flex items-center gap-2">
+                                 <h3 className="font-bold text-slate-900 text-xl tracking-tight">AI Signal Analysis</h3>
+                                 <span className={cn(
+                                   "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border",
+                                   prediction.sentiment === 'bullish' ? "bg-emerald-50 text-emerald-600 border-emerald-200" :
+                                   prediction.sentiment === 'bearish' ? "bg-rose-50 text-rose-600 border-rose-200" :
+                                   "bg-slate-50 text-slate-600 border-slate-200"
+                                 )}>
+                                   {prediction.sentiment}
+                                 </span>
+                               </div>
+                               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 flex items-center gap-2">
+                                 Engine: Gemini 3.1 Pro • Precision: {(prediction.confidence * 100).toFixed(0)}%
+                               </p>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="font-bold text-slate-900 text-lg">AI Prediction Model Results</h3>
-                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Model: Gemini 3.1 Pro Intelligence</p>
+                          
+                          <div className="text-right">
+                             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Target Forecast</div>
+                             <div className="text-2xl font-black text-blue-600 tracking-tighter">${prediction.targetPrice.toFixed(2)}</div>
+                             <div className="text-[10px] font-bold text-emerald-500 uppercase">+{((prediction.targetPrice / (marketData.quote?.c || 1) - 1) * 100).toFixed(2)}% upside</div>
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-8">
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
                            <div className="space-y-4">
-                              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                 <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Technical Analysis</h4>
-                                 <p className="text-sm text-slate-700 leading-relaxed font-medium">{prediction.reasoning}</p>
+                              <div className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 backdrop-blur-sm h-full">
+                                 <div className="flex items-center gap-2 mb-3">
+                                   <Activity className="w-4 h-4 text-blue-500" />
+                                   <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Deep Reasoning</h4>
+                                 </div>
+                                 <p className="text-xs text-slate-600 leading-relaxed font-medium">{prediction.reasoning}</p>
                               </div>
                            </div>
                            <div className="space-y-4">
-                              <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                                 <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">Key Risk Factors</h4>
-                                 <ul className="space-y-2">
+                              <div className="p-5 bg-blue-50/30 rounded-2xl border border-blue-100 backdrop-blur-sm h-full">
+                                 <div className="flex items-center gap-2 mb-3">
+                                   <AlertCircle className="w-4 h-4 text-blue-400" />
+                                   <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest font-mono">Risk Vectors</h4>
+                                 </div>
+                                 <ul className="space-y-3">
                                     {prediction.risks.map((risk, idx) => (
-                                      <li key={idx} className="text-xs text-slate-600 flex items-center gap-2 font-medium">
-                                        <span className="w-1.5 h-1.5 bg-blue-300 rounded-full"></span> {risk}
+                                      <li key={idx} className="text-xs text-slate-700 flex items-start gap-3 font-medium group/item">
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-1.5 shrink-0 group-hover/item:scale-125 transition-transform"></div>
+                                        <span>{risk}</span>
                                       </li>
                                     ))}
                                  </ul>
                               </div>
                            </div>
                         </div>
-                      </div>
+                      </motion.div>
                     )}
                   </div>
                   <div className="col-span-4 h-full">
@@ -680,6 +745,63 @@ export default function App() {
                         To enable live trading data, configure <code>FINNHUB_API_KEY</code> in the <strong>Secrets</strong> panel of AI Studio. 
                         This terminal uses a secure Express.js backend to shield your tokens from browser exposure.
                       </p>
+                   </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-3xl p-8 space-y-6 shadow-sm">
+                   <div className="flex items-center gap-2 mb-2">
+                      <Bell className="w-4 h-4 text-blue-600" />
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Price Alert Preferences</h4>
+                   </div>
+                   
+                   <div className="space-y-6">
+                      <div className="flex items-center justify-between">
+                         <div>
+                            <p className="text-sm font-bold text-slate-800">Notification Sound</p>
+                            <p className="text-[10px] text-slate-500 font-medium font-mono">Audible alert when thresholds are crossed</p>
+                         </div>
+                         <button 
+                            onClick={() => setAlertSettings(prev => ({ ...prev, soundEnabled: !prev.soundEnabled }))}
+                            className={cn(
+                               "w-10 h-5 rounded-full transition-all relative p-1",
+                               alertSettings.soundEnabled ? "bg-blue-600" : "bg-slate-200"
+                            )}
+                         >
+                            <div className={cn(
+                               "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                               alertSettings.soundEnabled ? "left-6" : "left-1"
+                            )}></div>
+                         </button>
+                      </div>
+
+                      <div className="h-px bg-slate-100"></div>
+
+                      <div className="space-y-4">
+                         <p className="text-sm font-bold text-slate-800">Preferred Alert Types</p>
+                         <div className="grid grid-cols-3 gap-2">
+                            {[
+                               { id: 'both', label: 'All Signals' },
+                               { id: 'above', label: 'Resistance (Above)' },
+                               { id: 'below', label: 'Support (Below)' }
+                            ].map(option => (
+                               <button 
+                                  key={option.id}
+                                  onClick={() => setAlertSettings(prev => ({ ...prev, allowedTypes: option.id as any }))}
+                                  className={cn(
+                                     "px-3 py-2 rounded-xl text-[10px] font-bold transition-all border",
+                                     alertSettings.allowedTypes === option.id 
+                                       ? "bg-blue-50 border-blue-200 text-blue-700 shadow-sm" 
+                                       : "bg-white border-slate-100 text-slate-500 hover:border-slate-200"
+                                  )}
+                               >
+                                  {option.label}
+                               </button>
+                            ))}
+                         </div>
+                         <p className="text-[9px] text-slate-400 font-medium italic">
+                            * Filtering preferences will suppress notifications even if alerts are active in the dashboard.
+                         </p>
+                      </div>
                    </div>
                 </div>
               </div>

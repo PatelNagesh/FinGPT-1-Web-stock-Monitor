@@ -23,8 +23,12 @@ import {
   Trash2,
   RefreshCcw,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Bell,
+  BellRing,
+  X
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { MarketChart, TimeRange } from './components/FinanceChart';
 import { NewsPanel } from './components/NewsPanel';
@@ -40,11 +44,29 @@ const navItems = [
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
 
+interface PriceAlert {
+  id: string;
+  symbol: string;
+  targetPrice: number;
+  type: 'above' | 'below';
+  createdAt: number;
+}
+
+interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'success' | 'alert';
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [watchlist, setWatchlist] = useState<string[]>(['NVDA', 'AAPL', 'TSLA', 'BTC']);
   const [selectedSymbol, setSelectedSymbol] = useState('NVDA');
   const [comparisonSymbols, setComparisonSymbols] = useState<string[]>(['NVDA']);
+  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
+  const [alertInput, setAlertInput] = useState('');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1D');
   const [marketData, setMarketData] = useState<{ quote: MarketQuote | null, news: any[], candles: any[], profile: CompanyProfile | null }>({
     quote: null,
@@ -116,6 +138,11 @@ export default function App() {
 
       setMarketData({ quote, news, candles: formattedCandles, profile });
       setDemoMode(isDemo());
+      
+      // Check alerts after data fetch
+      if (quote) {
+        checkAlerts(primarySymbol, quote.c);
+      }
     } catch (e: any) {
       console.error(e);
       let msg = e.message || 'Failed to fetch market data.';
@@ -162,6 +189,69 @@ export default function App() {
        setSelectedSymbol(symbol);
        return [symbol, ...prev];
     });
+  };
+
+  const checkAlerts = useCallback((symbol: string, currentPrice: number) => {
+    setAlerts(prev => {
+      const triggered = prev.filter(a => 
+        a.symbol === symbol && 
+        ((a.type === 'above' && currentPrice >= a.targetPrice) || 
+         (a.type === 'below' && currentPrice <= a.targetPrice))
+      );
+
+      if (triggered.length > 0) {
+        triggered.forEach(t => {
+          const id = Math.random().toString(36).substr(2, 9);
+          setNotifications(prevNotif => [
+            ...prevNotif,
+            {
+              id,
+              title: `Price Alert: ${t.symbol}`,
+              message: `${t.symbol} has reached your target of $${t.targetPrice}. Current price: $${currentPrice}`,
+              type: 'alert'
+            }
+          ]);
+          
+          // Auto remove notification
+          setTimeout(() => {
+            setNotifications(p => p.filter(n => n.id !== id));
+          }, 8000);
+        });
+        
+        // Remove triggered alerts
+        return prev.filter(a => !triggered.find(t => t.id === a.id));
+      }
+      return prev;
+    });
+  }, []);
+
+  const addAlert = () => {
+    const price = parseFloat(alertInput);
+    if (isNaN(price) || !marketData.quote) return;
+
+    const type = price > marketData.quote.c ? 'above' : 'below';
+    const newAlert: PriceAlert = {
+      id: Math.random().toString(36).substr(2, 9),
+      symbol: selectedSymbol,
+      targetPrice: price,
+      type,
+      createdAt: Date.now()
+    };
+
+    setAlerts(prev => [...prev, newAlert]);
+    setAlertInput('');
+    
+    // Success notification
+    const nid = Math.random().toString(36).substr(2, 9);
+    setNotifications(prev => [
+      ...prev,
+      { id: nid, title: 'Alert Set', message: `Notifying when ${selectedSymbol} is ${type} $${price}`, type: 'success' }
+    ]);
+    setTimeout(() => setNotifications(p => p.filter(n => n.id !== nid)), 3000);
+  };
+
+  const removeAlert = (id: string) => {
+    setAlerts(prev => prev.filter(a => a.id !== id));
   };
 
   const handlePredict = async () => {
@@ -373,7 +463,23 @@ export default function App() {
                   {marketData.profile ? `${marketData.profile.name} • ${marketData.profile.exchange}` : 'AI-driven predictive modeling for high-performance trading.'}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center gap-2 bg-white border border-slate-200 p-1 pl-3 rounded-xl shadow-sm">
+                  <Bell className="w-3.5 h-3.5 text-slate-400" />
+                  <input 
+                    type="number"
+                    value={alertInput}
+                    onChange={(e) => setAlertInput(e.target.value)}
+                    placeholder="Alert Price"
+                    className="w-24 bg-transparent border-none text-[10px] font-bold outline-none"
+                  />
+                  <button 
+                    onClick={addAlert}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition-colors"
+                  >
+                    Set Alert
+                  </button>
+                </div>
                 <button 
                   onClick={handlePredict}
                   disabled={predicting || loading}
@@ -387,6 +493,41 @@ export default function App() {
                 </button>
               </div>
             </header>
+
+        {/* Notifications Overlay */}
+        <div className="fixed top-20 right-8 z-50 flex flex-col gap-3 pointer-events-none">
+          <AnimatePresence>
+            {notifications.map(n => (
+              <motion.div
+                key={n.id}
+                initial={{ opacity: 0, x: 20, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 20, scale: 0.95 }}
+                className={cn(
+                  "p-4 rounded-2xl shadow-2xl border w-80 pointer-events-auto flex gap-3 items-start",
+                  n.type === 'alert' ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"
+                )}
+              >
+                <div className={cn(
+                  "p-2 rounded-xl shrink-0",
+                  n.type === 'alert' ? "bg-amber-500 text-white" : "bg-blue-50 text-blue-600"
+                )}>
+                  {n.type === 'alert' ? <BellRing className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-xs font-bold uppercase tracking-widest mb-1 opacity-90">{n.title}</h4>
+                  <p className="text-[10px] leading-relaxed opacity-70">{n.message}</p>
+                </div>
+                <button 
+                  onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))}
+                  className="opacity-50 hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
 
             {activeTab === 'dashboard' && (
               <div className="space-y-6">
@@ -410,6 +551,26 @@ export default function App() {
 
                 <div className="grid grid-cols-12 gap-6 min-h-0">
                   <div className="col-span-8 space-y-6">
+                    {/* Active Alerts for selected symbol */}
+                    {alerts.filter(a => a.symbol === selectedSymbol).length > 0 && (
+                      <div className="flex items-center gap-3 overflow-x-auto pb-1 scrollbar-hide">
+                        {alerts.filter(a => a.symbol === selectedSymbol).map(alert => (
+                          <div 
+                            key={alert.id}
+                            className="shrink-0 bg-amber-50/50 border border-amber-100 px-3 py-1.5 rounded-full flex items-center gap-2 text-[10px] font-bold text-amber-700"
+                          >
+                            <Bell className="w-3 h-3" />
+                            <span>Notify {alert.type} ${alert.targetPrice}</span>
+                            <button 
+                              onClick={() => removeAlert(alert.id)}
+                              className="hover:text-rose-500 transition-colors"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="bg-white border border-slate-200 rounded-3xl shadow-sm p-6 overflow-hidden ring-1 ring-slate-100">
                       <MarketChart 
                         symbols={comparisonSymbols} 

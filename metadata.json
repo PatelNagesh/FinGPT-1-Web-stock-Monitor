@@ -1,0 +1,6 @@
+{
+  "name": "FinGPT Web",
+  "description": "An open-source financial AI dashboard inspired by FinGPT. Analyzing financial markets with Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

@@ -26,6 +26,7 @@ import {
   RefreshCcw,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   Bell,
   BellRing,
   X,
@@ -671,8 +672,19 @@ export default function App() {
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-white border-2 border-blue-600/10 rounded-3xl p-8 flex flex-col gap-6 shadow-xl shadow-blue-500/5 relative overflow-hidden group"
+                        className={cn(
+                          "bg-white border-2 rounded-3xl p-8 flex flex-col gap-6 shadow-xl relative overflow-hidden group transition-all duration-500",
+                          prediction.sentiment === 'bullish' ? "border-emerald-600/20 shadow-emerald-500/10 shadow-xl" :
+                          prediction.sentiment === 'bearish' ? "border-rose-600/20 shadow-rose-500/10 shadow-xl" :
+                          "border-blue-600/10 shadow-blue-500/10 shadow-xl"
+                        )}
                       >
+                        <div className={cn(
+                          "absolute -top-24 -right-24 w-64 h-64 blur-[100px] opacity-20 rounded-full transition-colors duration-700 pointer-events-none",
+                          prediction.sentiment === 'bullish' ? "bg-emerald-400" :
+                          prediction.sentiment === 'bearish' ? "bg-rose-400" :
+                          "bg-blue-400"
+                        )} />
                         <div className="absolute top-0 right-0 p-10 transform translate-x-8 -translate-y-8 opacity-[0.03] group-hover:scale-110 transition-transform duration-1000 rotate-12">
                            <BrainCircuit className="w-48 h-48 text-blue-600" />
                         </div>
@@ -723,27 +735,28 @@ export default function App() {
                            <div className="flex gap-6 items-center z-10">
                               {/* Circular Confidence Meter */}
                               <div className="flex flex-col items-center">
-                                 <div className="relative w-12 h-12 flex items-center justify-center">
+                                 <div className="relative w-14 h-14 flex items-center justify-center">
                                     <svg className="w-full h-full transform -rotate-90" viewBox="0 0 50 50">
                                       <circle
                                         cx="25"
                                         cy="25"
-                                        r="22"
+                                        r="21"
                                         stroke="currentColor"
-                                        strokeWidth="3"
+                                        strokeWidth="4"
                                         fill="transparent"
                                         className="text-slate-100"
                                       />
                                       <motion.circle
                                         cx="25"
                                         cy="25"
-                                        r="22"
+                                        r="21"
                                         stroke="currentColor"
-                                        strokeWidth="3"
+                                        strokeWidth="4"
                                         fill="transparent"
-                                        strokeDasharray={2 * Math.PI * 22}
-                                        initial={{ strokeDashoffset: 2 * Math.PI * 22 }}
-                                        animate={{ strokeDashoffset: 2 * Math.PI * 22 * (1 - prediction.confidence) }}
+                                        strokeDasharray={2 * Math.PI * 21}
+                                        initial={{ strokeDashoffset: 2 * Math.PI * 21 }}
+                                        animate={{ strokeDashoffset: 2 * Math.PI * 21 * (1 - prediction.confidence) }}
+                                        strokeLinecap="round"
                                         className={cn(
                                           "transition-colors",
                                           prediction.confidence > 0.7 ? "text-blue-600" : 
@@ -751,22 +764,42 @@ export default function App() {
                                         )}
                                       />
                                     </svg>
-                                    <span className="absolute text-[10px] font-black text-slate-900">{(prediction.confidence * 100).toFixed(0)}%</span>
+                                    <div className="absolute flex flex-col items-center justify-center">
+                                       <span className="text-xs font-black text-slate-900 leading-none">{(prediction.confidence * 100).toFixed(0)}</span>
+                                       <span className="text-[6px] font-bold text-slate-400 uppercase tracking-tighter">%</span>
+                                    </div>
                                  </div>
-                                 <span className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mt-1">Confidence</span>
+                                 <div className={cn(
+                                   "text-[7px] font-black uppercase tracking-widest mt-1.5 px-1.5 py-0.5 rounded",
+                                   prediction.confidence > 0.7 ? "bg-blue-50 text-blue-600" : 
+                                   prediction.confidence > 0.4 ? "bg-amber-50 text-amber-600" : "bg-rose-50 text-rose-600"
+                                 )}>
+                                   {prediction.confidence > 0.7 ? 'Strong Signal' : prediction.confidence > 0.4 ? 'Moderate' : 'Speculative'}
+                                 </div>
                               </div>
 
-                              <div className="text-right bg-slate-50/80 border border-slate-100 rounded-2xl px-4 py-3 min-w-[130px] shadow-sm">
-                                 <div className="text-[8px] font-bold text-blue-600 uppercase tracking-widest mb-0.5 flex items-center justify-end gap-1">
-                                   <Zap className="w-2.5 h-2.5 fill-current" />
+                              <div className={cn(
+                                "text-right border rounded-3xl px-6 py-4 min-w-[150px] shadow-sm transition-colors",
+                                prediction.sentiment === 'bullish' ? "bg-emerald-50/50 border-emerald-100" :
+                                prediction.sentiment === 'bearish' ? "bg-rose-50/50 border-rose-100" :
+                                "bg-slate-50/80 border-slate-100"
+                              )}>
+                                 <div className={cn(
+                                   "text-[9px] font-black uppercase tracking-[0.2em] mb-1 flex items-center justify-end gap-1.5",
+                                   prediction.sentiment === 'bullish' ? "text-emerald-600" :
+                                   prediction.sentiment === 'bearish' ? "text-rose-600" :
+                                   "text-blue-600"
+                                 )}>
+                                   <Zap className="w-3 h-3 fill-current" />
                                    Price Target
                                  </div>
-                                 <div className="text-2xl font-black text-slate-900 tracking-tighter leading-none">${prediction.targetPrice.toFixed(2)}</div>
+                                 <div className="text-2xl font-black text-slate-900 tracking-tighter leading-none mb-1">${prediction.targetPrice.toFixed(2)}</div>
                                  <div className={cn(
-                                   "text-[9px] font-bold uppercase mt-1",
-                                   prediction.targetPrice > (marketData.quote?.c || 0) ? "text-emerald-500" : "text-rose-500"
+                                   "text-[10px] font-bold uppercase flex items-center justify-end gap-1",
+                                   prediction.targetPrice > (marketData.quote?.c || 0) ? "text-emerald-600" : "text-rose-600"
                                  )}>
-                                   {prediction.targetPrice > (marketData.quote?.c || 0) ? '+' : ''}{((prediction.targetPrice / (marketData.quote?.c || 1) - 1) * 100).toFixed(2)}% ROI Signal
+                                   {prediction.targetPrice > (marketData.quote?.c || 0) ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                                   {prediction.targetPrice > (marketData.quote?.c || 0) ? '+' : ''}{((prediction.targetPrice / (marketData.quote?.c || 1) - 1) * 100).toFixed(2)}% ROI
                                  </div>
                               </div>
                            </div>
@@ -792,25 +825,35 @@ export default function App() {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
                            <div className="space-y-4">
-                              <div className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 backdrop-blur-sm h-full">
-                                 <div className="flex items-center gap-2 mb-3">
-                                   <Activity className="w-4 h-4 text-blue-500" />
-                                   <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Deep Reasoning</h4>
+                              <div className="p-6 bg-slate-50/50 rounded-3xl border border-slate-100 backdrop-blur-sm h-full group/reason">
+                                 <div className="flex items-center justify-between mb-4">
+                                   <div className="flex items-center gap-2">
+                                     <Activity className="w-4 h-4 text-blue-500" />
+                                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">Signal Logic</h4>
+                                   </div>
+                                   <div className="px-2 py-0.5 bg-white rounded-full border border-slate-200 text-[8px] font-black text-slate-400 uppercase tracking-tighter">
+                                     Primary Evidence
+                                   </div>
                                  </div>
-                                 <p className="text-xs text-slate-600 leading-relaxed font-medium">{prediction.reasoning}</p>
+                                 <p className="text-sm text-slate-700 leading-relaxed font-semibold">
+                                   <span className="text-blue-600 opacity-20 text-4xl font-serif">"</span>
+                                   {prediction.reasoning}
+                                 </p>
                               </div>
                            </div>
                            <div className="space-y-4">
-                              <div className="p-5 bg-blue-50/30 rounded-2xl border border-blue-100 backdrop-blur-sm h-full">
-                                 <div className="flex items-center gap-2 mb-3">
-                                   <AlertCircle className="w-4 h-4 text-blue-400" />
-                                   <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest font-mono">Risk Vectors</h4>
+                              <div className="p-6 bg-blue-50/30 rounded-3xl border border-blue-100 backdrop-blur-sm h-full">
+                                 <div className="flex items-center gap-2 mb-4">
+                                   <AlertTriangle className="w-4 h-4 text-blue-400" />
+                                   <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest font-mono">Risk Matrix</h4>
                                  </div>
                                  <ul className="space-y-3">
                                     {prediction.risks.map((risk, idx) => (
-                                      <li key={idx} className="text-xs text-slate-700 flex items-start gap-3 font-medium group/item">
-                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-1.5 shrink-0 group-hover/item:scale-125 transition-transform"></div>
-                                        <span>{risk}</span>
+                                      <li key={idx} className="text-xs text-slate-700 flex items-start gap-3 font-semibold group/item">
+                                        <div className="bg-blue-100 text-blue-600 rounded-lg p-1 group-hover/item:bg-blue-600 group-hover/item:text-white transition-colors">
+                                          <ShieldCheck className="w-3 h-3" />
+                                        </div>
+                                        <span className="pt-0.5 leading-tight">{risk}</span>
                                       </li>
                                     ))}
                                  </ul>

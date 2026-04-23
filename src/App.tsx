@@ -17,7 +17,9 @@ import {
   Github,
   Globe,
   TrendingUp,
+  TrendingDown,
   Activity,
+  Minus,
   Search,
   Plus,
   Trash2,
@@ -74,10 +76,11 @@ export default function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1D');
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | undefined>(undefined);
-  const [marketData, setMarketData] = useState<{ quote: MarketQuote | null, news: any[], candles: any[], profile: CompanyProfile | null }>({
+  const [marketData, setMarketData] = useState<{ quote: MarketQuote | null, news: any[], candles: any[], portfolioCandles: any[], profile: CompanyProfile | null }>({
     quote: null,
     news: [],
     candles: [],
+    portfolioCandles: [],
     profile: null
   });
   const [prediction, setPrediction] = useState<PricePrediction | null>(null);
@@ -120,8 +123,9 @@ export default function App() {
         getCompanyProfile(primarySymbol),
       ]);
 
-      // Fetch candles for all symbols in the comparison list
-      const candleRequests = symbols.map(s => getCandles(s, resolution, from, to));
+      // Fetch candles for all symbols in the watchlist to build portfolio performance
+      const uniqueSymbols = Array.from(new Set([...symbols, ...watchlist]));
+      const candleRequests = uniqueSymbols.map(s => getCandles(s, resolution, from, to));
       const candlesList = await Promise.all(candleRequests);
 
       // Merge candles by time
@@ -129,7 +133,7 @@ export default function App() {
       const timeToTicks: { [time: string]: number } = {};
       
       candlesList.forEach((candles, index) => {
-        const symbol = symbols[index];
+        const symbol = uniqueSymbols[index];
         if (candles.t) {
           candles.t.forEach((t: number, i: number) => {
             const timeKey = range === '1D' || range === '5D' 
@@ -145,11 +149,33 @@ export default function App() {
         }
       });
 
-      const formattedCandles = Object.values(mergedMap).sort((a: any, b: any) => {
-        return timeToTicks[a.time] - timeToTicks[b.time];
+      // Sort and calculate portfolio aggregate
+      const sortedTimes = Object.keys(timeToTicks).sort((a, b) => timeToTicks[a] - timeToTicks[b]);
+      const lastPrices: { [s: string]: number } = {};
+      const formattedCandles: any[] = [];
+      const portfolioCandles: any[] = [];
+
+      sortedTimes.forEach(time => {
+        let portfolioSum = 0;
+        watchlist.forEach(s => {
+          if (mergedMap[time][s] !== undefined) {
+             lastPrices[s] = mergedMap[time][s];
+          }
+          portfolioSum += lastPrices[s] || 0;
+        });
+
+        const row = { ...mergedMap[time] };
+        formattedCandles.push(row);
+        
+        // Push only necessary info for the portfolio chart to keep it lightweight
+        portfolioCandles.push({ 
+          time: row.time, 
+          portfolioValue: portfolioSum,
+          portfolio: portfolioSum // Duplicate for MarketChart generic field handling if needed
+        });
       });
 
-      setMarketData({ quote, news, candles: formattedCandles, profile });
+      setMarketData({ quote, news, candles: formattedCandles, portfolioCandles, profile });
       setDemoMode(isDemo());
       
       // Check alerts after data fetch
@@ -178,7 +204,7 @@ export default function App() {
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [comparisonSymbols, timeRange, customRange, fetchData]);
+  }, [comparisonSymbols, timeRange, customRange, watchlist, fetchData]);
 
   const toggleComparison = (symbol: string) => {
     setPrediction(null); // Reset prediction when changing focus
@@ -611,6 +637,36 @@ export default function App() {
                         }}
                       />
                     </div>
+                    <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+                      <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center">
+                              <BarChart3 className="w-5 h-5" />
+                           </div>
+                           <div>
+                              <h3 className="font-bold text-slate-900 text-lg">Portfolio Cumulative Value</h3>
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest leading-none">Aggregated Watchlist Units (1:1)</p>
+                           </div>
+                        </div>
+                        <div className="text-right">
+                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Current Est.</div>
+                           <div className="text-2xl font-black text-slate-900 tracking-tighter">
+                             ${marketData.portfolioCandles[marketData.portfolioCandles.length - 1]?.portfolioValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                           </div>
+                        </div>
+                      </div>
+                      <div className="h-[200px]">
+                        <MarketChart 
+                          symbols={['portfolioValue']}
+                          data={marketData.portfolioCandles}
+                          activeRange={timeRange}
+                          loading={loading}
+                          title="Portfolio Performance"
+                          showControls={false}
+                        />
+                      </div>
+                    </div>
+
                     {prediction && (
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
@@ -628,27 +684,110 @@ export default function App() {
                             </div>
                             <div>
                                <div className="flex items-center gap-2">
-                                 <h3 className="font-bold text-slate-900 text-xl tracking-tight">AI Signal Analysis</h3>
-                                 <span className={cn(
-                                   "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border",
-                                   prediction.sentiment === 'bullish' ? "bg-emerald-50 text-emerald-600 border-emerald-200" :
-                                   prediction.sentiment === 'bearish' ? "bg-rose-50 text-rose-600 border-rose-200" :
-                                   "bg-slate-50 text-slate-600 border-slate-200"
-                                 )}>
-                                   {prediction.sentiment}
-                                 </span>
+                                <h3 className="font-bold text-slate-900 text-xl tracking-tight leading-none mb-2">AI Signal Analysis</h3>
+                                <div className="flex items-center gap-4">
+                                  {/* Sentiment Gradient Indicator */}
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-[7px] font-bold text-slate-400 uppercase tracking-tighter w-24">
+                                      <span>Bearish</span>
+                                      <span>Neutral</span>
+                                      <span>Bullish</span>
+                                    </div>
+                                    <div className="w-24 h-1 rounded-full bg-gradient-to-r from-rose-500 via-slate-200 to-emerald-500 relative">
+                                      <motion.div 
+                                        initial={{ left: "50%" }}
+                                        animate={{ 
+                                          left: prediction.sentiment === 'bullish' ? '90%' : 
+                                                prediction.sentiment === 'bearish' ? '10%' : '50%' 
+                                        }}
+                                        className="absolute top-1/2 -translate-y-1/2 w-2 h-2 bg-white border border-slate-900 rounded-full shadow-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                  
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border flex items-center gap-1 shadow-sm",
+                                    prediction.sentiment === 'bullish' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                    prediction.sentiment === 'bearish' ? "bg-rose-50 text-rose-700 border-rose-200" :
+                                    "bg-slate-50 text-slate-700 border-slate-200"
+                                  )}>
+                                    {prediction.sentiment === 'bullish' && <TrendingUp className="w-2.5 h-2.5" />}
+                                    {prediction.sentiment === 'bearish' && <TrendingDown className="w-2.5 h-2.5" />}
+                                    {prediction.sentiment === 'neutral' && <Minus className="w-2.5 h-2.5" />}
+                                    {prediction.sentiment}
+                                  </span>
+                                </div>
                                </div>
-                               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 flex items-center gap-2">
-                                 Engine: Gemini 3.1 Pro • Precision: {(prediction.confidence * 100).toFixed(0)}%
-                               </p>
                             </div>
                           </div>
-                          
-                          <div className="text-right">
-                             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Target Forecast</div>
-                             <div className="text-2xl font-black text-blue-600 tracking-tighter">${prediction.targetPrice.toFixed(2)}</div>
-                             <div className="text-[10px] font-bold text-emerald-500 uppercase">+{((prediction.targetPrice / (marketData.quote?.c || 1) - 1) * 100).toFixed(2)}% upside</div>
-                          </div>
+                           <div className="flex gap-6 items-center z-10">
+                              {/* Circular Confidence Meter */}
+                              <div className="flex flex-col items-center">
+                                 <div className="relative w-12 h-12 flex items-center justify-center">
+                                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 50 50">
+                                      <circle
+                                        cx="25"
+                                        cy="25"
+                                        r="22"
+                                        stroke="currentColor"
+                                        strokeWidth="3"
+                                        fill="transparent"
+                                        className="text-slate-100"
+                                      />
+                                      <motion.circle
+                                        cx="25"
+                                        cy="25"
+                                        r="22"
+                                        stroke="currentColor"
+                                        strokeWidth="3"
+                                        fill="transparent"
+                                        strokeDasharray={2 * Math.PI * 22}
+                                        initial={{ strokeDashoffset: 2 * Math.PI * 22 }}
+                                        animate={{ strokeDashoffset: 2 * Math.PI * 22 * (1 - prediction.confidence) }}
+                                        className={cn(
+                                          "transition-colors",
+                                          prediction.confidence > 0.7 ? "text-blue-600" : 
+                                          prediction.confidence > 0.4 ? "text-amber-500" : "text-rose-500"
+                                        )}
+                                      />
+                                    </svg>
+                                    <span className="absolute text-[10px] font-black text-slate-900">{(prediction.confidence * 100).toFixed(0)}%</span>
+                                 </div>
+                                 <span className="text-[7px] font-bold text-slate-400 uppercase tracking-widest mt-1">Confidence</span>
+                              </div>
+
+                              <div className="text-right bg-slate-50/80 border border-slate-100 rounded-2xl px-4 py-3 min-w-[130px] shadow-sm">
+                                 <div className="text-[8px] font-bold text-blue-600 uppercase tracking-widest mb-0.5 flex items-center justify-end gap-1">
+                                   <Zap className="w-2.5 h-2.5 fill-current" />
+                                   Price Target
+                                 </div>
+                                 <div className="text-2xl font-black text-slate-900 tracking-tighter leading-none">${prediction.targetPrice.toFixed(2)}</div>
+                                 <div className={cn(
+                                   "text-[9px] font-bold uppercase mt-1",
+                                   prediction.targetPrice > (marketData.quote?.c || 0) ? "text-emerald-500" : "text-rose-500"
+                                 )}>
+                                   {prediction.targetPrice > (marketData.quote?.c || 0) ? '+' : ''}{((prediction.targetPrice / (marketData.quote?.c || 1) - 1) * 100).toFixed(2)}% ROI Signal
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+
+                        {/* Price Range Visual Indicator */}
+                        <div className="relative z-10 px-2 py-4">
+                           <div className="flex justify-between text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                              <span>Current: ${marketData.quote?.c.toFixed(2)}</span>
+                              <span>Target: ${prediction.targetPrice.toFixed(2)}</span>
+                           </div>
+                           <div className="h-4 bg-slate-50 rounded-lg border border-slate-100 flex items-center px-1">
+                              <div className="flex-1 h-1 bg-slate-200 rounded-full relative">
+                                 <motion.div 
+                                    initial={{ left: "50%" }}
+                                    animate={{ left: prediction.targetPrice > (marketData.quote?.o || 1) ? "85%" : "15%" }}
+                                    className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white border-2 border-blue-600 rounded-full shadow-md z-20"
+                                 />
+                                 <div className="absolute left-[50%] top-1/2 -translate-y-1/2 w-1 h-3 bg-slate-400 rounded-full z-10" />
+                              </div>
+                           </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">

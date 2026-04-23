@@ -39,7 +39,7 @@ const PILL_COLORS = [
   '#06b6d4', // cyan
 ];
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, isNormalized }: any) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-white border border-slate-200 p-3 rounded-xl shadow-xl min-w-[120px]">
@@ -54,7 +54,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
                 ></div>
                 <span className="text-[10px] font-bold text-slate-600 uppercase">{entry.name}</span>
               </div>
-              <span className="text-xs font-bold text-slate-900">${entry.value.toFixed(2)}</span>
+              <span className="text-xs font-bold text-slate-900">
+                {isNormalized ? '' : '$'}{entry.value.toFixed(2)}{isNormalized ? '%' : ''}
+              </span>
             </div>
           ))}
         </div>
@@ -75,6 +77,7 @@ interface MarketChartProps {
   title?: string;
   showControls?: boolean;
   loading?: boolean;
+  isNormalized?: boolean;
 }
 
 export function MarketChart({ 
@@ -85,11 +88,37 @@ export function MarketChart({
   onRangeChange,
   title = "Market Benchmarking",
   showControls = true,
-  loading = false
+  loading = false,
+  isNormalized = false
 }: MarketChartProps) {
   const [chartData, setChartData] = React.useState(data || defaultData);
   const [localCustomFrom, setLocalCustomFrom] = React.useState(customRange?.from || '');
   const [localCustomTo, setLocalCustomTo] = React.useState(customRange?.to || '');
+
+  const processedData = React.useMemo(() => {
+    if (!isNormalized || !chartData || chartData.length === 0) return chartData;
+    
+    // Find first valid price for each symbol to use as basis
+    const basePrices: Record<string, number> = {};
+    symbols.forEach(s => {
+      // Find the first candle that has a non-zero price for this symbol
+      const firstCandle = chartData.find(c => c[s] && c[s] > 0);
+      if (firstCandle) {
+        basePrices[s] = firstCandle[s];
+      }
+    });
+
+    return chartData.map(candle => {
+      const normalizedPoint = { ...candle };
+      symbols.forEach(s => {
+        if (candle[s] && basePrices[s]) {
+          // Calculate percentage change from base
+          normalizedPoint[s] = ((candle[s] / basePrices[s]) - 1) * 100;
+        }
+      });
+      return normalizedPoint;
+    });
+  }, [chartData, symbols, isNormalized]);
 
   React.useEffect(() => {
     if (data) setChartData(data);
@@ -180,7 +209,7 @@ export function MarketChart({
       )}
       <div className={cn("w-full", showControls ? "h-[300px]" : "h-full")}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData}>
+          <AreaChart data={processedData}>
             <defs>
               {symbols.map((s, i) => (
                 <linearGradient key={s} id={`color${s}`} x1="0" y1="0" x2="0" y2="1">
@@ -206,9 +235,9 @@ export function MarketChart({
               axisLine={false}
               domain={['auto', 'auto']}
               dx={-10}
-              tickFormatter={(val) => `$${val}`}
+              tickFormatter={(val) => isNormalized ? `${val}%` : `$${val}`}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip isNormalized={isNormalized} />} />
             {symbols.map((s, i) => (
               <Area 
                 key={s}

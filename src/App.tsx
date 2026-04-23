@@ -23,6 +23,7 @@ import {
   MessageSquareCode, 
   MonitorDot, 
   Settings, 
+  Settings2,
   ShieldCheck, 
   Zap,
   Github,
@@ -56,6 +57,8 @@ import { predictPrice, PricePrediction } from './services/geminiService';
 const navItems = [
   { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { id: 'forecaster', icon: BrainCircuit, label: 'Sentiment Engine' },
+  { id: 'comparison', icon: BarChart3, label: 'Benchmark Analysis' },
+  { id: 'alerts', icon: Bell, label: 'Alerts Center' },
   { id: 'intelligence', icon: MonitorDot, label: 'Market Analysis' },
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
@@ -109,6 +112,141 @@ export default function App() {
   const [demoMode, setDemoMode] = useState(false);
   const [predicting, setPredicting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isNormalized, setIsNormalized] = useState(false);
+
+  const toggleComparison = useCallback((symbol: string) => {
+    setPrediction(null); // Reset prediction when changing focus
+    setComparisonSymbols(prev => {
+       const isIncluded = prev.includes(symbol);
+       if (isIncluded) {
+         if (prev.length === 1) return prev;
+         
+         // If it's already primary, toggle it off
+         if (symbol === prev[0]) {
+           const filtered = prev.filter(s => s !== symbol);
+           setSelectedSymbol(filtered[0]);
+           return filtered;
+         }
+         
+         // If included but not primary, make it primary
+         const filtered = prev.filter(s => s !== symbol);
+         setSelectedSymbol(symbol);
+         return [symbol, ...filtered];
+       }
+       // If not included, add to front
+       setSelectedSymbol(symbol);
+       return [symbol, ...prev];
+    });
+  }, []);
+
+  const checkAlerts = useCallback((symbol: string, currentPrice: number) => {
+    setAlerts(prev => {
+      const triggered = prev.filter(a => {
+        const matchesSymbol = a.symbol === symbol;
+        const matchesTypeFilter = alertSettings.allowedTypes === 'both' || a.type === alertSettings.allowedTypes;
+        if (!matchesSymbol || !matchesTypeFilter) return false;
+
+        return (a.type === 'above' && currentPrice >= a.targetPrice) || 
+               (a.type === 'below' && currentPrice <= a.targetPrice);
+      });
+
+      if (triggered.length > 0) {
+        triggered.forEach(t => {
+          const id = Math.random().toString(36).substr(2, 9);
+          
+          if (alertSettings.soundEnabled) {
+            // Attempt to play a subtle notification sound (browser allowing)
+            try {
+              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+              audio.volume = 0.3;
+              audio.play().catch(() => {});
+            } catch (e) {}
+          }
+
+          setNotifications(prevNotif => [
+            ...prevNotif,
+            {
+              id,
+              title: `Price Alert: ${t.symbol}`,
+              message: `${t.symbol} has reached your target of $${t.targetPrice}. Current price: $${currentPrice}`,
+              type: 'alert'
+            }
+          ]);
+          
+          // Auto remove notification
+          setTimeout(() => {
+            setNotifications(p => p.filter(n => n.id !== id));
+          }, 8000);
+        });
+        
+        // Remove triggered alerts
+        return prev.filter(a => !triggered.find(t => t.id === a.id));
+      }
+      return prev;
+    });
+  }, [alertSettings]);
+
+  const removeAlert = useCallback((id: string) => {
+    setAlerts(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const addAlert = useCallback(() => {
+    const price = parseFloat(alertInput);
+    if (isNaN(price) || !marketData.quote) return;
+
+    const type = price > marketData.quote.c ? 'above' : 'below';
+    const newAlert: PriceAlert = {
+      id: Math.random().toString(36).substr(2, 9),
+      symbol: selectedSymbol,
+      targetPrice: price,
+      type,
+      createdAt: Date.now()
+    };
+
+    setAlerts(prev => [...prev, newAlert]);
+    setAlertInput('');
+    
+    // Success notification
+    const nid = Math.random().toString(36).substr(2, 9);
+    setNotifications(prev => [
+      ...prev,
+      { id: nid, title: 'Alert Set', message: `Notifying when ${selectedSymbol} is ${type} $${price}`, type: 'success' }
+    ]);
+    setTimeout(() => setNotifications(p => p.filter(n => n.id !== nid)), 3000);
+  }, [alertInput, marketData.quote, selectedSymbol]);
+
+  const handlePredict = useCallback(async () => {
+    if (!marketData.quote) return;
+    setPredicting(true);
+    try {
+      const res = await predictPrice(selectedSymbol, marketData.quote, marketData.news);
+      setPrediction(res);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || 'AI prediction failed.');
+    } finally {
+      setPredicting(false);
+    }
+  }, [selectedSymbol, marketData.quote, marketData.news]);
+
+  const addToWatchlist = useCallback((symbol: string) => {
+    setPrediction(null); // Reset prediction
+    if (!watchlist.includes(symbol)) {
+      setWatchlist(prev => [...prev, symbol]);
+    }
+    setComparisonSymbols(prev => {
+      const filtered = prev.filter(s => s !== symbol);
+      return [symbol, ...filtered];
+    });
+    setSelectedSymbol(symbol);
+  }, [watchlist]);
+
+  const removeFromWatchlist = useCallback((symbol: string) => {
+    setWatchlist(prev => prev.filter(s => s !== symbol));
+    if (selectedSymbol === symbol && watchlist.length > 1) {
+      setSelectedSymbol(watchlist[0] === symbol ? watchlist[1] : watchlist[0]);
+    }
+  }, [selectedSymbol, watchlist]);
 
   const fetchData = useCallback(async (symbols: string[], range: TimeRange, custom?: { from: string; to: string }) => {
     setLoading(true);
@@ -237,7 +375,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [watchlist, checkAlerts]);
 
   useEffect(() => {
     fetchData(comparisonSymbols, timeRange, customRange);
@@ -246,142 +384,36 @@ export default function App() {
       fetchData(comparisonSymbols, timeRange, customRange);
     }, 60000);
 
-    return () => clearInterval(interval);
-  }, [comparisonSymbols, timeRange, customRange, watchlist, fetchData]);
-
-  const toggleComparison = (symbol: string) => {
-    setPrediction(null); // Reset prediction when changing focus
-    setComparisonSymbols(prev => {
-       const isIncluded = prev.includes(symbol);
-       if (isIncluded) {
-         if (prev.length === 1) return prev;
-         
-         // If it's already primary, toggle it off
-         if (symbol === prev[0]) {
-           const filtered = prev.filter(s => s !== symbol);
-           setSelectedSymbol(filtered[0]);
-           return filtered;
-         }
-         
-         // If included but not primary, make it primary
-         const filtered = prev.filter(s => s !== symbol);
-         setSelectedSymbol(symbol);
-         return [symbol, ...filtered];
-       }
-       // If not included, add to front
-       setSelectedSymbol(symbol);
-       return [symbol, ...prev];
-    });
-  };
-
-  const checkAlerts = useCallback((symbol: string, currentPrice: number) => {
-    setAlerts(prev => {
-      const triggered = prev.filter(a => {
-        const matchesSymbol = a.symbol === symbol;
-        const matchesTypeFilter = alertSettings.allowedTypes === 'both' || a.type === alertSettings.allowedTypes;
-        if (!matchesSymbol || !matchesTypeFilter) return false;
-
-        return (a.type === 'above' && currentPrice >= a.targetPrice) || 
-               (a.type === 'below' && currentPrice <= a.targetPrice);
-      });
-
-      if (triggered.length > 0) {
-        triggered.forEach(t => {
-          const id = Math.random().toString(36).substr(2, 9);
-          
-          if (alertSettings.soundEnabled) {
-            // Attempt to play a subtle notification sound (browser allowing)
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-              audio.volume = 0.3;
-              audio.play().catch(() => {});
-            } catch (e) {}
+    // High frequency ticker & alert check - poll quotes for all symbols in watchlist every 20s
+    const tickerInterval = setInterval(async () => {
+      if (demoMode) return;
+      
+      try {
+        const quoteRequests = watchlist.map(s => getQuote(s));
+        const quotes = await Promise.all(quoteRequests);
+        
+        const newWatchlistQuotes: { [s: string]: { price: number, change: number } } = {};
+        watchlist.forEach((s, i) => {
+          const q = quotes[i];
+          if (q) {
+            newWatchlistQuotes[s] = { price: q.c, change: q.dp };
+            // Silent check for alerts during high-freq poll
+            checkAlerts(s, q.c);
           }
-
-          setNotifications(prevNotif => [
-            ...prevNotif,
-            {
-              id,
-              title: `Price Alert: ${t.symbol}`,
-              message: `${t.symbol} has reached your target of $${t.targetPrice}. Current price: $${currentPrice}`,
-              type: 'alert'
-            }
-          ]);
-          
-          // Auto remove notification
-          setTimeout(() => {
-            setNotifications(p => p.filter(n => n.id !== id));
-          }, 8000);
         });
         
-        // Remove triggered alerts
-        return prev.filter(a => !triggered.find(t => t.id === a.id));
-      }
-      return prev;
-    });
-  }, []);
+        setMarketData(prev => ({
+          ...prev,
+          watchlistQuotes: { ...prev.watchlistQuotes, ...newWatchlistQuotes }
+        }));
+      } catch (e) {}
+    }, 20000);
 
-  const addAlert = () => {
-    const price = parseFloat(alertInput);
-    if (isNaN(price) || !marketData.quote) return;
-
-    const type = price > marketData.quote.c ? 'above' : 'below';
-    const newAlert: PriceAlert = {
-      id: Math.random().toString(36).substr(2, 9),
-      symbol: selectedSymbol,
-      targetPrice: price,
-      type,
-      createdAt: Date.now()
+    return () => {
+      clearInterval(interval);
+      clearInterval(tickerInterval);
     };
-
-    setAlerts(prev => [...prev, newAlert]);
-    setAlertInput('');
-    
-    // Success notification
-    const nid = Math.random().toString(36).substr(2, 9);
-    setNotifications(prev => [
-      ...prev,
-      { id: nid, title: 'Alert Set', message: `Notifying when ${selectedSymbol} is ${type} $${price}`, type: 'success' }
-    ]);
-    setTimeout(() => setNotifications(p => p.filter(n => n.id !== nid)), 3000);
-  };
-
-  const removeAlert = (id: string) => {
-    setAlerts(prev => prev.filter(a => a.id !== id));
-  };
-
-  const handlePredict = async () => {
-    if (!marketData.quote) return;
-    setPredicting(true);
-    try {
-      const res = await predictPrice(selectedSymbol, marketData.quote, marketData.news);
-      setPrediction(res);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || 'AI prediction failed.');
-    } finally {
-      setPredicting(false);
-    }
-  };
-
-  const addToWatchlist = (symbol: string) => {
-    setPrediction(null); // Reset prediction
-    if (!watchlist.includes(symbol)) {
-      setWatchlist(prev => [...prev, symbol]);
-    }
-    setComparisonSymbols(prev => {
-      const filtered = prev.filter(s => s !== symbol);
-      return [symbol, ...filtered];
-    });
-    setSelectedSymbol(symbol);
-  };
-
-  const removeFromWatchlist = (symbol: string) => {
-    setWatchlist(prev => prev.filter(s => s !== symbol));
-    if (selectedSymbol === symbol && watchlist.length > 1) {
-      setSelectedSymbol(watchlist[0] === symbol ? watchlist[1] : watchlist[0]);
-    }
-  };
+  }, [comparisonSymbols, timeRange, customRange, watchlist, fetchData, demoMode, checkAlerts]);
 
   return (
     <div className="flex flex-col h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden">
@@ -576,6 +608,13 @@ export default function App() {
                   >
                     Set Alert
                   </button>
+                  <button 
+                    onClick={() => setActiveTab('alerts')}
+                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-blue-600 transition-colors tooltip"
+                    title="Manage All Alerts"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
                 <button 
                   onClick={handlePredict}
@@ -669,6 +708,35 @@ export default function App() {
                       </div>
                     )}
                     <div className="bg-white border border-slate-200 rounded-3xl shadow-sm p-6 overflow-hidden ring-1 ring-slate-100">
+                      <div className="flex items-center justify-between mb-6 px-2">
+                        <div className="flex items-center gap-4">
+                          <button 
+                            onClick={() => setIsNormalized(false)}
+                            className={cn(
+                              "text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all",
+                              !isNormalized ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"
+                            )}
+                          >
+                            Absolute
+                          </button>
+                          <button 
+                            onClick={() => setIsNormalized(true)}
+                            className={cn(
+                              "text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all flex items-center gap-2",
+                              isNormalized ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"
+                            )}
+                          >
+                            Benchmark Mode
+                            {isNormalized && <Sparkles className="w-3 h-3 fill-current" />}
+                          </button>
+                        </div>
+                        {isNormalized && (
+                          <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 rounded-full border border-amber-100">
+                            <AlertCircle className="w-3 h-3 text-amber-500" />
+                            <span className="text-[9px] font-bold text-amber-700 uppercase leading-none">Normalized to % Change</span>
+                          </div>
+                        )}
+                      </div>
                       <MarketChart 
                         symbols={comparisonSymbols} 
                         data={marketData.candles} 
@@ -678,6 +746,8 @@ export default function App() {
                           setTimeRange(range);
                           if (custom) setCustomRange(custom);
                         }}
+                        isNormalized={isNormalized}
+                        title={isNormalized ? "Relative Benchmarking Analysis" : "Market Price Analysis"}
                       />
                     </div>
                     <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
@@ -1014,6 +1084,239 @@ export default function App() {
               </div>
             )}
             
+            {activeTab === 'comparison' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tighter">Benchmarking Lab</h2>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Relative Performance Correlation</p>
+                  </div>
+                  <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-4 py-2 rounded-2xl">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest leading-none">AI Relative Strength Enabled</span>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+                  <MarketChart 
+                    symbols={comparisonSymbols} 
+                    data={marketData.candles} 
+                    activeRange={timeRange}
+                    customRange={customRange}
+                    onRangeChange={(range, custom) => {
+                      setTimeRange(range);
+                      if (custom) setCustomRange(custom);
+                    }}
+                    isNormalized={true}
+                    title="Competitive Performance (Normalized %)"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+                    <h3 className="font-bold text-slate-900 text-lg mb-6">Comparison Matrix</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-left border-b border-slate-100">
+                            <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Symbol</th>
+                            <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Price</th>
+                            <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Change</th>
+                            <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Rel. Strength</th>
+                            <th className="pb-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Volatility</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {comparisonSymbols.map(s => {
+                            const data = marketData.watchlistQuotes[s];
+                            return (
+                              <tr key={s} className="hover:bg-slate-50/50 transition-colors group">
+                                <td className="py-4 font-black text-slate-900">{s}</td>
+                                <td className="py-4 font-mono text-xs">${data?.price.toFixed(2) || '...'}</td>
+                                <td className="py-4">
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded text-[10px] font-bold",
+                                    (data?.change || 0) >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                                  )}>
+                                    {(data?.change || 0) >= 0 ? '+' : ''}{data?.change.toFixed(2)}%
+                                  </span>
+                                </td>
+                                <td className="py-4">
+                                  <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div 
+                                      className={cn(
+                                        "h-full rounded-full transition-all duration-1000",
+                                        (data?.change || 0) >= 0 ? "bg-emerald-500" : "bg-rose-500"
+                                      )}
+                                      style={{ width: `${Math.min(100, Math.max(10, Math.abs(data?.change || 0) * 10))}%` }}
+                                    ></div>
+                                  </div>
+                                </td>
+                                <td className="py-4 text-[10px] font-bold text-slate-400 uppercase tracking-tight">Medium</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-white relative overflow-hidden shadow-2xl">
+                    <div className="absolute top-0 right-0 p-10 opacity-[0.03] rotate-12">
+                      <BarChart3 className="w-48 h-48" />
+                    </div>
+                    <div className="relative z-10 h-full flex flex-col">
+                      <h3 className="font-bold text-white text-lg mb-2">Correlation Insights</h3>
+                      <p className="text-xs text-slate-400 leading-relaxed mb-8">
+                        The selected basket shows a high degree of correlation with index movements. Diversification suggested for long-term alpha.
+                      </p>
+                      
+                      <div className="flex-1 space-y-6">
+                        <div className="space-y-2">
+                           <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-500">
+                              <span>Beta Sensitivity</span>
+                              <span className="text-emerald-400">Low</span>
+                           </div>
+                           <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                              <div className="w-[30%] h-full bg-emerald-500 rounded-full"></div>
+                           </div>
+                        </div>
+                        <div className="space-y-2">
+                           <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-500">
+                              <span>Sector Overlap</span>
+                              <span className="text-amber-400">High</span>
+                           </div>
+                           <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                              <div className="w-[85%] h-full bg-amber-500 rounded-full"></div>
+                           </div>
+                        </div>
+                      </div>
+
+                      <button className="w-full py-3 bg-blue-600 hover:bg-blue-700 rounded-xl text-xs font-black uppercase tracking-widest transition-all mt-auto shadow-lg shadow-blue-900/40">
+                         Export Detailed Report
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'alerts' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tighter text-left">Alerts Management</h2>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1 text-left">Active price threshold monitoring</p>
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl hover:bg-slate-200 transition-colors cursor-pointer" onClick={() => {
+                      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+                      audio.volume = 0.3;
+                      audio.play().catch(() => {});
+                  }}>
+                    <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                    <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Test Notification Sound</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 px-4 py-2 rounded-2xl">
+                    <BellRing className="w-4 h-4 text-amber-500" />
+                    <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest leading-none">
+                      {alerts.length} Active Monitors
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm h-fit">
+                    <h3 className="font-bold text-slate-900 text-lg mb-6 flex items-center gap-2">
+                       <Plus className="w-5 h-5 text-blue-600" />
+                       Set New Alert
+                    </h3>
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Selected Asset</label>
+                         <div className="flex items-center gap-3 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                            <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs">
+                               {selectedSymbol}
+                            </div>
+                            <div>
+                               <p className="text-sm font-black text-slate-900">{selectedSymbol}</p>
+                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Currently analyzing</p>
+                            </div>
+                         </div>
+                      </div>
+
+                      <div className="space-y-2">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-left block">Target Price (USD)</label>
+                         <div className="relative">
+                            <input 
+                              type="number"
+                              value={alertInput}
+                              onChange={(e) => setAlertInput(e.target.value)}
+                              placeholder={`Current: $${marketData.quote?.c || '...'}`}
+                              className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-6 py-4 text-lg font-black text-slate-900 placeholder:text-slate-300 outline-none focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
+                            />
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-black text-slate-300">USD</div>
+                         </div>
+                      </div>
+
+                      <button 
+                        onClick={addAlert}
+                        disabled={!alertInput}
+                        className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+                      >
+                         Secure Price Alert
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm min-h-[400px]">
+                    <div className="flex items-center justify-between mb-6">
+                       <h3 className="font-bold text-slate-900 text-lg">Active Thresholds</h3>
+                    </div>
+                    
+                    {alerts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                         <Bell className="w-12 h-12 mb-4 opacity-10" />
+                         <p className="text-xs font-bold uppercase tracking-widest">No active alerts set</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                         {alerts.map(alert => (
+                           <div 
+                             key={alert.id}
+                             className="flex items-center justify-between p-4 border border-slate-50 bg-slate-50/30 rounded-2xl group hover:border-blue-100 hover:bg-white transition-all duration-300"
+                           >
+                              <div className="flex items-center gap-4">
+                                 <div className={cn(
+                                   "w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs transition-colors",
+                                   alert.type === 'above' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                                 )}>
+                                    {alert.symbol}
+                                 </div>
+                                 <div className="text-left">
+                                    <div className="flex items-center gap-2">
+                                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Target</span>
+                                       <span className="text-sm font-black text-slate-900">${alert.targetPrice}</span>
+                                    </div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                                       Triggers when price is {alert.type} target
+                                    </p>
+                                 </div>
+                              </div>
+                              <button 
+                                onClick={() => removeAlert(alert.id)}
+                                className="w-8 h-8 rounded-lg flex items-center justify-center bg-slate-100 text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-all opacity-0 group-hover:opacity-100"
+                              >
+                                 <Trash2 className="w-4 h-4" />
+                              </button>
+                           </div>
+                         ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'intelligence' && (
               <div className="space-y-6">
                 <div className="bg-white border border-slate-200 rounded-3xl p-8 flex flex-col items-center text-center max-w-2xl mx-auto shadow-sm">

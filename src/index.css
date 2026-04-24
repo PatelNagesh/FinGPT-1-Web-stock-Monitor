@@ -10,6 +10,25 @@
   .animate-marquee {
     animation: marquee 50s linear infinite;
   }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .dark-scrollbar::-webkit-scrollbar-thumb {
+    background: #334155;
+  }
+  .dark-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+  }
 }
 
 @keyframes marquee {

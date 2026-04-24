@@ -8,9 +8,10 @@ import {
   Tooltip, 
   ResponsiveContainer,
   AreaChart,
-  Area
+  Area,
+  ComposedChart
 } from 'recharts';
-import { Calendar } from 'lucide-react';
+import { Calendar, Settings2, Activity, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const defaultData = [
@@ -39,6 +40,12 @@ const PILL_COLORS = [
   '#06b6d4', // cyan
 ];
 
+const INDICATOR_COLORS = {
+  SMA: '#f59e0b',
+  EMA: '#ef4444',
+  RSI: '#8b5cf6'
+};
+
 const CustomTooltip = ({ active, payload, label, isNormalized }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -55,7 +62,7 @@ const CustomTooltip = ({ active, payload, label, isNormalized }: any) => {
                 <span className="text-[10px] font-bold text-slate-600 uppercase">{entry.name}</span>
               </div>
               <span className="text-xs font-bold text-slate-900">
-                {isNormalized ? '' : '$'}{entry.value.toFixed(2)}{isNormalized ? '%' : ''}
+                {entry.name === 'RSI' ? '' : (isNormalized ? '' : '$')}{entry.value.toFixed(2)}{isNormalized && entry.name !== 'RSI' ? '%' : ''}
               </span>
             </div>
           ))}
@@ -80,6 +87,60 @@ interface MarketChartProps {
   isNormalized?: boolean;
 }
 
+// Indicator Calculation Helpers
+const calculateSMA = (data: any[], key: string, period: number) => {
+  return data.map((_, idx, arr) => {
+    if (idx < period - 1) return null;
+    const slice = arr.slice(idx - period + 1, idx + 1);
+    const sum = slice.reduce((acc, curr) => acc + (curr[key] || 0), 0);
+    return sum / period;
+  });
+};
+
+const calculateEMA = (data: any[], key: string, period: number) => {
+  const k = 2 / (period + 1);
+  let ema = null;
+  return data.map((curr, idx) => {
+    const val = curr[key] || 0;
+    if (idx === 0) {
+      ema = val;
+      return ema;
+    }
+    ema = (val * k) + (ema * (1 - k));
+    return ema;
+  });
+};
+
+const calculateRSI = (data: any[], key: string, period: number) => {
+  let avgGain = 0;
+  let avgLoss = 0;
+  
+  return data.map((curr, idx, arr) => {
+    if (idx === 0) return null;
+    
+    const diff = (curr[key] || 0) - (arr[idx - 1][key] || 0);
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    
+    if (idx < period) {
+      avgGain += gain;
+      avgLoss += loss;
+      if (idx === period - 1) {
+        avgGain /= period;
+        avgLoss /= period;
+      }
+      return null;
+    }
+    
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+  });
+};
+
 export function MarketChart({ 
   symbols, 
   data, 
@@ -94,31 +155,61 @@ export function MarketChart({
   const [chartData, setChartData] = React.useState(data || defaultData);
   const [localCustomFrom, setLocalCustomFrom] = React.useState(customRange?.from || '');
   const [localCustomTo, setLocalCustomTo] = React.useState(customRange?.to || '');
+  
+  const [showIndicators, setShowIndicators] = React.useState(false);
+  const [indicatorOptions, setIndicatorOptions] = React.useState({
+    showSMA: false,
+    smaPeriod: 20,
+    showEMA: false,
+    emaPeriod: 20,
+    showRSI: false,
+    rsiPeriod: 14
+  });
 
   const processedData = React.useMemo(() => {
-    if (!isNormalized || !chartData || chartData.length === 0) return chartData;
+    let result = [...chartData];
     
-    // Find first valid price for each symbol to use as basis
-    const basePrices: Record<string, number> = {};
-    symbols.forEach(s => {
-      // Find the first candle that has a non-zero price for this symbol
-      const firstCandle = chartData.find(c => c[s] && c[s] > 0);
-      if (firstCandle) {
-        basePrices[s] = firstCandle[s];
-      }
-    });
-
-    return chartData.map(candle => {
-      const normalizedPoint = { ...candle };
+    if (isNormalized && result.length > 0) {
+      // Find first valid price for each symbol to use as basis
+      const basePrices: Record<string, number> = {};
       symbols.forEach(s => {
-        if (candle[s] && basePrices[s]) {
-          // Calculate percentage change from base
-          normalizedPoint[s] = ((candle[s] / basePrices[s]) - 1) * 100;
-        }
+        const firstCandle = result.find(c => c[s] && c[s] > 0);
+        if (firstCandle) basePrices[s] = firstCandle[s];
       });
-      return normalizedPoint;
-    });
-  }, [chartData, symbols, isNormalized]);
+
+      result = result.map(candle => {
+        const normalizedPoint = { ...candle };
+        symbols.forEach(s => {
+          if (candle[s] && basePrices[s]) {
+            normalizedPoint[s] = ((candle[s] / basePrices[s]) - 1) * 100;
+          }
+        });
+        return normalizedPoint;
+      });
+    }
+
+    // Add Indicators (only for the primary symbol if selected, or first symbol)
+    if (symbols.length > 0) {
+      const primarySymbol = symbols[0];
+      
+      if (indicatorOptions.showSMA) {
+        const smaValues = calculateSMA(result, primarySymbol, indicatorOptions.smaPeriod);
+        result = result.map((item, i) => ({ ...item, SMA: smaValues[i] }));
+      }
+      
+      if (indicatorOptions.showEMA) {
+        const emaValues = calculateEMA(result, primarySymbol, indicatorOptions.emaPeriod);
+        result = result.map((item, i) => ({ ...item, EMA: emaValues[i] }));
+      }
+      
+      if (indicatorOptions.showRSI) {
+        const rsiValues = calculateRSI(result, primarySymbol, indicatorOptions.rsiPeriod);
+        result = result.map((item, i) => ({ ...item, RSI: rsiValues[i] }));
+      }
+    }
+
+    return result;
+  }, [chartData, symbols, isNormalized, indicatorOptions]);
 
   React.useEffect(() => {
     if (data) setChartData(data);
@@ -137,9 +228,126 @@ export function MarketChart({
       {showControls && (
         <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-6">
           <div className="space-y-2">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm tracking-tight">{title}</h3>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Relative Performance</p>
+            <div className="flex items-center gap-3">
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm tracking-tight">{title}</h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Relative Performance</p>
+              </div>
+              <div className="relative">
+                <button 
+                  onClick={() => setShowIndicators(!showIndicators)}
+                  className={cn(
+                    "p-2 rounded-xl transition-all flex items-center gap-2",
+                    showIndicators ? "bg-slate-900 text-white shadow-lg" : "bg-slate-50 text-slate-400 hover:text-slate-600 border border-slate-100"
+                  )}
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span className="text-[10px] font-black uppercase tracking-widest leading-none">Indicators</span>
+                </button>
+
+                {showIndicators && (
+                  <div className="absolute top-full left-0 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl p-4 z-50 animate-in fade-in zoom-in duration-200">
+                    <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-50">
+                      <Activity className="w-4 h-4 text-blue-600" />
+                      <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Technical Overlays</h4>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {/* SMA */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={indicatorOptions.showSMA}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, showSMA: e.target.checked }))}
+                              className="w-3 h-3 rounded text-blue-600"
+                            />
+                            <span className="text-[10px] font-bold text-slate-700 uppercase">SMA (Moving Avg)</span>
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: INDICATOR_COLORS.SMA }}></div>
+                          </div>
+                        </div>
+                        {indicatorOptions.showSMA && (
+                          <div className="flex items-center gap-2 pl-5">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Period:</span>
+                            <input 
+                              type="number" 
+                              value={indicatorOptions.smaPeriod}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, smaPeriod: parseInt(e.target.value) || 20 }))}
+                              className="w-12 text-[10px] border border-slate-100 rounded px-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* EMA */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={indicatorOptions.showEMA}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, showEMA: e.target.checked }))}
+                              className="w-3 h-3 rounded text-blue-600"
+                            />
+                            <span className="text-[10px] font-bold text-slate-700 uppercase">EMA (Exponential)</span>
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: INDICATOR_COLORS.EMA }}></div>
+                          </div>
+                        </div>
+                        {indicatorOptions.showEMA && (
+                          <div className="flex items-center gap-2 pl-5">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Period:</span>
+                            <input 
+                              type="number" 
+                              value={indicatorOptions.emaPeriod}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, emaPeriod: parseInt(e.target.value) || 20 }))}
+                              className="w-12 text-[10px] border border-slate-100 rounded px-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* RSI */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={indicatorOptions.showRSI}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, showRSI: e.target.checked }))}
+                              className="w-3 h-3 rounded text-blue-600"
+                            />
+                            <span className="text-[10px] font-bold text-slate-700 uppercase">RSI (Relative Strength)</span>
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: INDICATOR_COLORS.RSI }}></div>
+                          </div>
+                        </div>
+                        {indicatorOptions.showRSI && (
+                          <div className="flex items-center gap-2 pl-5">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Period:</span>
+                            <input 
+                              type="number" 
+                              value={indicatorOptions.rsiPeriod}
+                              onChange={(e) => setIndicatorOptions(prev => ({ ...prev, rsiPeriod: parseInt(e.target.value) || 14 }))}
+                              className="w-12 text-[10px] border border-slate-100 rounded px-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-50 flex items-center gap-2">
+                      <Info className="w-3 h-3 text-slate-300" />
+                      <p className="text-[8px] text-slate-400 font-medium">Applied to primary symbol: <span className="font-bold">{symbols[0]}</span></p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
                {symbols.map((s, i) => (
@@ -207,9 +415,9 @@ export function MarketChart({
           </div>
         </div>
       )}
-      <div className={cn("w-full", showControls ? "h-[300px]" : "h-full")}>
+      <div className={cn("w-full", showControls ? "h-[350px]" : "h-full")}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={processedData}>
+          <ComposedChart data={processedData}>
             <defs>
               {symbols.map((s, i) => (
                 <linearGradient key={s} id={`color${s}`} x1="0" y1="0" x2="0" y2="1">
@@ -229,6 +437,7 @@ export function MarketChart({
               minTickGap={30}
             />
             <YAxis 
+              yAxisId="left"
               stroke="#94a3b8" 
               fontSize={10} 
               tickLine={false} 
@@ -237,10 +446,24 @@ export function MarketChart({
               dx={-10}
               tickFormatter={(val) => isNormalized ? `${val}%` : `$${val}`}
             />
+            {indicatorOptions.showRSI && (
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                stroke="#8b5cf6" 
+                fontSize={10} 
+                tickLine={false} 
+                axisLine={false}
+                domain={[0, 100]}
+                dx={10}
+                tickCount={5}
+              />
+            )}
             <Tooltip content={<CustomTooltip isNormalized={isNormalized} />} />
             {symbols.map((s, i) => (
               <Area 
                 key={s}
+                yAxisId="left"
                 name={s === 'portfolioValue' ? 'Portfolio' : s}
                 type="monotone" 
                 dataKey={s} 
@@ -252,7 +475,43 @@ export function MarketChart({
                 activeDot={{ r: 4, strokeWidth: 0 }}
               />
             ))}
-          </AreaChart>
+            
+            {/* Indicators */}
+            {indicatorOptions.showSMA && (
+              <Line 
+                yAxisId="left"
+                type="monotone" 
+                dataKey="SMA" 
+                stroke={INDICATOR_COLORS.SMA} 
+                strokeWidth={1.5} 
+                dot={false}
+                name={`SMA (${indicatorOptions.smaPeriod})`}
+                strokeDasharray="5 5"
+              />
+            )}
+            {indicatorOptions.showEMA && (
+              <Line 
+                yAxisId="left"
+                type="monotone" 
+                dataKey="EMA" 
+                stroke={INDICATOR_COLORS.EMA} 
+                strokeWidth={1.5} 
+                dot={false}
+                name={`EMA (${indicatorOptions.emaPeriod})`}
+              />
+            )}
+            {indicatorOptions.showRSI && (
+              <Line 
+                yAxisId="right"
+                type="monotone" 
+                dataKey="RSI" 
+                stroke={INDICATOR_COLORS.RSI} 
+                strokeWidth={1.5} 
+                dot={false}
+                name="RSI"
+              />
+            )}
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>

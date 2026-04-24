@@ -158,7 +158,7 @@ export function Forecaster({ symbol, watchlist = [] }: ForecasterProps) {
                 {m.role === 'model' ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
               </div>
               <div className={cn(
-                "p-4 rounded-xl text-sm leading-relaxed shadow-sm border",
+                "p-4 rounded-xl text-sm leading-relaxed shadow-sm border break-words whitespace-pre-wrap overflow-hidden",
                 m.role === 'model' ? "bg-white text-slate-700 border-slate-100 rounded-tl-none" : "bg-slate-50 text-slate-800 border-slate-200 rounded-tr-none"
               )}>
                 {m.content}

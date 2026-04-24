@@ -75,13 +75,30 @@ export const isDemo = () => isDemoMode;
 async function fetchWithError(url: string, symbolHint?: string) {
   try {
     const response = await fetch(url);
-    const data = await response.json();
+    
+    // Check if the response is actually JSON before parsing
+    const contentType = response.headers.get("content-type");
+    let data: any;
+    
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      // If we got HTML, it's likely a server error or fallback. 
+      // We should treat this as a potential trigger for demo mode if we have mock data.
+      if (symbolHint && MOCK_DATA[symbolHint]) {
+        console.warn('Received non-JSON response, falling back to demo data');
+        isDemoMode = true;
+        return null;
+      }
+      throw new Error(`Expected JSON but received ${contentType || 'plain text'}: ${text.slice(0, 50)}...`);
+    }
     
     if (!response.ok) {
       // If the error is about missing key, and we have mock data, use it
-      if (data.error?.includes('FINNHUB_API_KEY') && symbolHint && MOCK_DATA[symbolHint]) {
+      if ((data.error?.includes('FINNHUB_API_KEY') || response.status === 401 || response.status === 403) && symbolHint && MOCK_DATA[symbolHint]) {
         isDemoMode = true;
-        console.warn(`API Key missing. Using demo data for ${symbolHint}`);
+        console.warn(`API Key missing or invalid. Using demo data for ${symbolHint}`);
         return null; // Signals to the caller to use mock fallback
       }
       throw new Error(data.error || `Market API error: ${response.status}`);
@@ -89,7 +106,9 @@ async function fetchWithError(url: string, symbolHint?: string) {
     isDemoMode = false;
     return data;
   } catch (err: any) {
-    if (err.message?.includes('FINNHUB_API_KEY') && symbolHint && MOCK_DATA[symbolHint]) {
+    // If any network error or parse error occurs, try to fallback to demo mode
+    if (symbolHint && MOCK_DATA[symbolHint]) {
+      console.warn('Network or parse error, falling back to demo data', err);
       isDemoMode = true;
       return null;
     }

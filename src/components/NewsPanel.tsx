@@ -101,7 +101,7 @@ export function NewsPanel({ news }: { news: any[] }) {
                     </span>
                     <ExternalLink className="w-3 h-3 text-slate-600 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" />
                   </div>
-                  <h4 className="text-xs font-bold text-white leading-relaxed mb-2">
+                  <h4 className="text-xs font-bold text-white leading-relaxed mb-2 break-words">
                     {item.headline}
                   </h4>
                   
@@ -110,7 +110,7 @@ export function NewsPanel({ news }: { news: any[] }) {
                       initial={false}
                       animate={{ height: isExpanded ? "auto" : "2.5em" }}
                       className={cn(
-                        "text-[10px] text-slate-500 leading-tight overflow-hidden",
+                        "text-[10px] text-slate-500 leading-tight overflow-hidden break-words",
                         !isExpanded && "line-clamp-2"
                       )}
                     >
